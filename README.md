@@ -1,5 +1,16 @@
 # Shutter Tester
 
+> **Rev B (this fork).** A redesign that arrives fully assembled from JLCPCB with no
+> soldering: a sensor board (ESP32-C6, three photodiodes, USB-C) and a separate light
+> board. One set of both boards is roughly £70 to £85 delivered to the UK. Design,
+> cost breakdown and ordering steps are in [hardware/README.md](hardware/README.md),
+> firmware in [firmware/shutter-tester-revb](firmware/shutter-tester-revb). Not yet built
+> or tested on hardware. The web UI also includes the USB (Web Serial) connection from
+> [9vvin's fork](https://github.com/9vvin/shutter-tester) and the theming, error
+> reporting and list fixes from [MichalTorma's fork](https://github.com/MichalTorma/shutter-tester).
+> Everything below is Ben Pirt's original README for the original
+> board, which this work is based on.
+
 A low cost but capable three-point shutter speed tester that runs on ESP32. It uses the PCB design to provide the physical structure of the tester so that all you need to do is solder it together and all of the mechanical design is taken care of.
 It runs on ESP32 so is easily updated using the Arduino platform. The project is 100% open source (see the [license file](LICENSE.md) for details).
 The UI runs in the browser and communicates with the shutter tester via Bluetooth - you can try out the UI [here](https://bjpirt.github.io/shutter-tester/?demo=true).
