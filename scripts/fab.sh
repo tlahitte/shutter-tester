@@ -46,7 +46,8 @@ with open(dst, "w", newline="") as f:
                 th = math.radians(rot)
                 x += dx * math.cos(th) + dy * math.sin(th)
                 y -= -dx * math.sin(th) + dy * math.cos(th)
-                rot = (rot + off) % 360
+                rot += off
+        rot %= 360          # KiCad writes -90 for 270; keep every row in 0..360
         w.writerow([r["Ref"], f"{x:.4f}mm", f"{y:.4f}mm", r["Side"].capitalize(), f"{rot:g}"])
 b = list(csv.DictReader(open(bom, newline="")))
 missing = [r["Designator"] for r in b if not r.get("LCSC Part #", "").strip()]

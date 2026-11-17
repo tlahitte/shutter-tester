@@ -53,7 +53,14 @@ R('R4', '10k', 'BOOT', '+3V3', 49.4, 24.4)
 j1 = {'A1': 'GND', 'A12': 'GND', 'B1': 'GND', 'B12': 'GND', 'A4': 'VBUS', 'A9': 'VBUS', 'B4': 'VBUS', 'B9': 'VBUS',
       'A5': 'CC1', 'B5': 'CC2', 'A6': 'USB_DP', 'B6': 'USB_DP', 'A7': 'USB_DN', 'B7': 'USB_DN', 'A8': None, 'B8': None, 'SH': 'GND'}
 d.add('J1', 'USB-C', 'Connector:USB_C_Receptacle_USB2.0_16P', 'Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12', j1,
-      (3.2, 17.0), 270, lcsc='C165948', mpn='TYPE-C-31-M-12')
+      (2.7, 17.0), 270, lcsc='C165948', mpn='TYPE-C-31-M-12')
+# J1 overhangs the board edge by 0.98 mm, as the HRO drawing recommends. Its grounded metal shell
+# lies flat on the board from the edge back to the two plastic pegs (6.28 mm of shell, so to
+# x = 5.3). Keep front-layer tracks and all vias out from under it, so that solder mask is never
+# the only thing between the shell and VBUS or a signal. The ground pour still fills the area.
+d.front_blocks = [(0.0, 12.4, 5.4, 21.6)]
+# Paste on the four shell legs so they are reflowed with everything else.
+d.paste_pth = {'J1': ('SH',)}
 R('R1', '5.1k', 'GND', 'CC1', 11.6, 14.4)
 R('R2', '5.1k', 'GND', 'CC2', 11.6, 19.6)
 C('C1', '10uF', 'VBUS', 'GND', 47.4, 10.2)
@@ -117,7 +124,11 @@ d.silk.append(('text', 'B', 25, 31.8, 'CAMERA SIDE  36x24 FRAME', 1.0))
 d.silk.append(('text', 'F', 33, 31.8, 'SHUTTER TESTER B', 0.9))
 
 # via_pad_gap keeps via holes off SMD pads (solder would wick down the barrel).
-RULES = dict(track=0.2, clearance=0.15, via=0.6, drill=0.3, grid=0.1, edge=0.4, corner=2.0, via_pad_gap=0.2)
+# guard: the amplifier inputs are 1M nodes. Their tracks keep an extra 0.4 mm away from all other
+# copper, and nets routed later keep the same distance from them (a USB or comparator edge right
+# next to one shows up as a spike on the signal).
+RULES = dict(track=0.2, clearance=0.15, via=0.6, drill=0.3, grid=0.1, edge=0.4, corner=2.0, via_pad_gap=0.2,
+             guard={'PD1_K': 0.4, 'PD2_K': 0.4, 'PD3_K': 0.4})
 
 if os.environ.get('MAX_RIPS'):
     RULES['max_rips'] = int(os.environ['MAX_RIPS'])
@@ -126,8 +137,12 @@ if __name__ == '__main__':
     t0 = time.time()
     root = d.write_schematic()
     d.write_project(RULES)
-    order = ['USB_DP', 'USB_DN', 'CC1', 'CC2', 'PD1_K', 'PD2_K', 'PD3_K']
-    first = []          # pads that failed on an earlier attempt get linked up first on the next
+    # THR2 goes early: its pad on C13 sits between C12 and C14 and gets boxed in otherwise.
+    order = ['CC1', 'CC2', 'USB_DN', 'USB_DP', 'PD1_K', 'PD2_K', 'PD3_K', 'THR2', 'THR1', 'THR3']
+    # Pads linked to their nearest same-net pad before anything else. The two D- pads and the two
+    # D+ pads of J1 interleave, so each pair is joined first (one behind the pins, one in front);
+    # otherwise the first trunk walls the other pair in. Pads that fail on an attempt are added.
+    first = [('USB_DN', 'J1', 'B7'), ('USB_DP', 'J1', 'A6')]
     for attempt in range(int(os.environ.get('ATTEMPTS', '8'))):
         failed, gfail = build_board(d, root, RULES, net_order=order, first_pads=first)
         print(f'attempt {attempt}: unrouted={len(failed)} gnd={len(gfail)}', failed, flush=True)

@@ -123,7 +123,11 @@ Two separate orders, one per board. For each one:
   way its footprint is drawn, which is how it normally works but has not been confirmed
   with a real order, hence step 5.
 - The photodiodes are clear packages on the open side of the board, so room light reaches
-  them from behind. Expect to need a strip of black tape over D1 to D3, or a dim room.
+  them from behind, and the two 2.5 mm sighting holes let light straight through. Expect to
+  need black tape over D1 to D3 and over both sighting holes, or a dim room.
+- Fit in a real camera has not been tried. Cut a 77 x 34 mm piece of card, mark the frame
+  centre 25 mm from one end, and check it lies on the film rails of your camera with room
+  for a USB-C plug on the short end before ordering.
 - VBPW34SR stock at JLCPCB was 925 on 16 Nov 2026. It dropped to 10 in June 2026 and was
   restocked within a month, so recheck before ordering. There is no drop-in alternative.
 - Bluetooth range with the board against a metal camera body is unknown. The antenna is
@@ -131,4 +135,10 @@ Two separate orders, one per board. For each one:
   in the web UI.
 - Black solder mask at 1.6 mm with HASL is listed by JLCPCB as an economic assembly
   option. If the order page refuses it, pick green and plan on the black tape below.
+- The four USB shell legs have solder paste in their slots so they are reflowed with the
+  other parts. If the placement preview or the delivered board shows them unsoldered, the
+  connector is held by its pins only: support the cable and do not lever on the plug.
+- Coupling from the USB data lines and comparator outputs into the 1M amplifier inputs is
+  kept down by extra spacing, but is an estimate, not a measurement. If a channel shows
+  spurious edges at very low light, use Bluetooth instead of USB for that test.
 - No ESD protection or fuse on USB. Fine for a bench prototype.

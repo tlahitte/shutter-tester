@@ -23,6 +23,7 @@ j1 = {'A1': 'GND', 'A12': 'GND', 'B1': 'GND', 'B12': 'GND', 'A4': 'VBUS', 'A9': 
       'A5': 'CC1', 'B5': 'CC2', 'A6': None, 'B6': None, 'A7': None, 'B7': None, 'A8': None, 'B8': None, 'SH': 'GND'}
 d.add('J1', 'USB-C', 'Connector:USB_C_Receptacle_USB2.0_16P', 'Connector_USB:USB_C_Receptacle_HRO_TYPE-C-31-M-12', j1,
       (32.05, 46.8), 0, lcsc='C165948', mpn='TYPE-C-31-M-12')
+d.paste_pth = {'J1': ('SH',)}     # paste on the shell legs so they are reflowed with the rest
 d.add('R10', '5.1k', 'Device:R', 'Resistor_SMD:R_0402_1005Metric', {'1': 'CC1', '2': 'GND'}, (30.8, 40.55), 90, lcsc='C25905')
 d.add('R11', '5.1k', 'Device:R', 'Resistor_SMD:R_0402_1005Metric', {'1': 'CC2', '2': 'GND'}, (33.8, 40.55), 90, lcsc='C25905')
 d.add('C1', '10uF', 'Device:C', 'Capacitor_SMD:C_0805_2012Metric', {'1': 'VBUS', '2': 'GND'}, (20.0, 44.5), 0, lcsc='C15850')

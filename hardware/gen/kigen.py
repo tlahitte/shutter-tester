@@ -243,6 +243,8 @@ class Router:
         # obstacle maps are already inflated by clearance + half a track, so a via only needs the extra radius
         self.vr = int(math.ceil((rules['via'] / 2 - rules['track'] / 2) / g + 0.5))
         self.vias = []          # (x, y, net) cell coords of every via placed
+        self.guard = {}         # net id -> extra spacing (mm) kept clear around its tracks
+        self.guard_pads = {}    # net id -> its own pad boxes (cells, grown by 1.2 mm); no extra spacing asked there
         self.vsep = int(math.ceil((rules['drill'] + 0.45) / g))
         self.vdisk = [(dx, dy) for dx in range(-self.vr, self.vr + 1) for dy in range(-self.vr, self.vr + 1) if dx * dx + dy * dy <= self.vr * self.vr]
 
@@ -320,6 +322,23 @@ class Router:
             tr = max(abs(t[1] - tx) + abs(t[2] - ty) for t in target)
             tset = set(target)
         self._viaset = set(self.vias)
+        # A guarded net also keeps its distance from copper that is already there, except close to
+        # its own pads, where the neighbouring pads are unavoidably near.
+        gr = int(round(self.guard.get(net, 0.0) / self.g))
+        gpads = self.guard_pads.get(net, ())
+        ring = [(dx * k, dy * k) for k in (gr, (gr + 1) // 2) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if dx or dy] if gr else ()
+
+        def free(l, i, x, y):
+            if not self.ok(l, i, net):
+                return False
+            if not gr or any(b[0] <= x <= b[2] and b[1] <= y <= b[3] for b in gpads):
+                return True
+            o = self.own[l]
+            for dx, dy in ring:
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < W and 0 <= yy < H and o[yy * W + xx] not in (0, net):
+                    return False
+            return True
         dist, prev, pq = {}, {}, []
         for s in sources:
             dist[s] = 0.0
@@ -348,7 +367,7 @@ class Router:
                 if nx < 0 or ny < 0 or nx >= W or ny >= H:
                     continue
                 i = ny * W + nx
-                if not self.ok(l, i, net):
+                if not free(l, i, nx, ny):
                     continue
                 if dx and dy and not (self.ok(l, y * W + nx, net) and self.ok(l, ny * W + x, net)):
                     continue
@@ -359,7 +378,7 @@ class Router:
                     prev[nxt] = cur
                     hq = 0 if want_via else max(0.0, math.hypot(nx - tx, ny - ty) - tr)
                     heapq.heappush(pq, (nd + hq, nd, nxt))
-            if not want_via and x % 2 == 0 and y % 2 == 0 and self.ok(1 - l, y * W + x, net) and self.via_ok(x, y, net):
+            if not want_via and x % 2 == 0 and y % 2 == 0 and free(1 - l, y * W + x, x, y) and self.via_ok(x, y, net):
                 nxt = (1 - l, x, y)
                 nd = d + via_cost
                 if nd < dist.get(nxt, 1e18):
@@ -379,8 +398,9 @@ class Router:
     def commit(self, path, net):
         """Mark a routed path as copper of `net`. Returns via cells."""
         g, r = self.g, self.rules
-        tin = r['track'] / 2 + r['clearance'] + r['track'] / 2 + 0.04
-        vin = r['via'] / 2 + r['clearance'] + r['track'] / 2 + 0.04
+        guard = self.guard.get(net, 0.0)      # extra room other nets must leave around this net's tracks
+        tin = r['track'] / 2 + r['clearance'] + r['track'] / 2 + 0.04 + guard
+        vin = r['via'] / 2 + r['clearance'] + r['track'] / 2 + 0.04 + guard
         vias = []
         for k, (l, x, y) in enumerate(path):
             self._mark(l, x * g, y * g, x * g, y * g, net, tin)
@@ -431,6 +451,7 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
     arc(r, r, 180); arc(W - r, r, 270); arc(W - r, H - r, 0); arc(r, H - r, 90)
 
     rt = Router(W, H, rules['grid'], rules)
+    rt.guard = {netid[n]: g for n, g in rules.get('guard', {}).items() if n in netid}
     # corners: block the square outside the rounded corner
     for (cx, cy) in ((0, 0), (W, 0), (W, H), (0, H)):
         rt.add_copper((0, 1), (min(cx, abs(cx - r * 0.45)), min(cy, abs(cy - r * 0.45)), max(cx, abs(cx - r * 0.45)), max(cy, abs(cy - r * 0.45))), -1, 0.3)
@@ -467,6 +488,10 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
             seen.add(num)
             if not th and rules.get('via_pad_gap') is not None:     # optional: keep via holes off SMD pads
                 rt.block_vias(box, rules['drill'] / 2 + rules['via_pad_gap'])
+            # Through-hole legs of an otherwise surface-mount part (USB shell legs) get paste, so they
+            # are soldered in the same reflow pass instead of depending on a manual step.
+            if num in getattr(d, 'paste_pth', {}).get(p.ref, ()) and pad.GetAttribute() == pcbnew.PAD_ATTRIB_PTH:
+                ls = pad.GetLayerSet(); ls.AddLayer(pcbnew.F_Paste); pad.SetLayerSet(ls)
             if net:
                 pad.SetNet(nets[net])
                 # Small two-pad parts get thermal spokes into the ground pour so both ends heat
@@ -481,6 +506,10 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
         if missing:
             raise SystemExit(f'{p.ref}: pins {sorted(missing)} have no pad in {p.fp}')
 
+    for n in rt.guard:
+        name = next(k for k, v in netid.items() if v == n)
+        rt.guard_pads[n] = [tuple(int(round(v / rules['grid'])) for v in (q[1][0] - 1.2, q[1][1] - 1.2, q[1][2] + 1.2, q[1][3] + 1.2))
+                            for q in pads.get(name, [])]
     for (x, y, dia) in d.holes:
         fp = pcbnew.FootprintLoad(f'{d.outdir}/shutter.pretty', f'NPTH_{dia}mm')
         fp.SetReference(f'H{len(fps)}'); fp.SetPosition(P(x, y))
@@ -492,6 +521,8 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
         rt.add_copper((0, 1), box, -1, rules['track'] / 2 + 0.1)
     for box in getattr(d, 'back_blocks', []):     # no back-layer tracks or vias here (keeps the pour light-tight)
         rt.add_copper((1,), box, -1, 0.0)
+    for box in getattr(d, 'front_blocks', []):    # no front-layer tracks or vias here (e.g. under a metal connector shell)
+        rt.add_copper((0,), box, -1, 0.0)
 
     def add_track(l, a, c, net):
         t = pcbnew.PCB_TRACK(b); t.SetStart(P(*a)); t.SetEnd(P(*c)); t.SetWidth(mm(rules['track']))
@@ -597,11 +628,19 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
                                 todo.remove(z); done.append(z)
                         changed = True
         absorb()
-        while todo:
+        later, grown, final = [], False, False     # pads that could not reach the tree yet
+        while todo or later:
+            if not todo:                 # try them again; if the tree has not grown since, for the last time
+                todo, later, final, grown = later, [], not grown, False
             todo.sort(key=lambda q: min(math.dist(ctr(q), ctr(z)) for z in done))
             q = todo.pop(0)
             target = [c for l in q[0] for c in rt.cells_in(l, q[1], netid[net])]
             path = rt.search(tree, target, netid[net])
+            if path is None and not final:
+                # another pad of this net may open a way in (USB-C: B7 is only reachable from A7)
+                later.append(q)
+                continue
+            grown = grown or path is not None
             if path is None:
                 # the pad may be fine and the tree end boxed in, so remember both ends
                 ends = sorted(done, key=lambda z: math.dist(ctr(z), ctr(q)))[:2]
@@ -691,14 +730,31 @@ def build_board(d, root, rules, net_order=(), no_route=(), gnd='GND', pours=None
     if extra:
         extra(b, pcbnew, nets, add_track, add_via)
 
-    pcbnew.ZONE_FILLER(b).Fill(b.Zones())
-    islands = []
-    for z in b.Zones():
-        if z.GetIsRuleArea():
-            continue
-        for layer in (pcbnew.B_Cu,):
-            ps = z.GetFilledPolysList(layer)
-            areas = sorted(ps.Outline(i).Area() / 1e12 for i in range(ps.OutlineCount()))
-            islands += [round(a, 1) for a in areas[:-1]]
+    def back_islands():
+        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+        out = []
+        for z in b.Zones():
+            if z.GetIsRuleArea():
+                continue
+            ps = z.GetFilledPolysList(pcbnew.B_Cu)
+            out += sorted((ps.Outline(i) for i in range(ps.OutlineCount())), key=lambda o: o.Area())
+        return out
+
+    # Back tracks can ring off a piece of the back pour. Its ground vias then only reach each
+    # other, so tie each such piece to the main pour with a routed ground track.
+    gvias = lambda o: [(0, x, y) for (x, y, n) in rt.vias if n == netid[gnd] and o.PointInside(P(x * rt.g, y * rt.g))]
+    outs = back_islands()
+    for o in outs[:-1]:
+        src, dst = gvias(o), gvias(outs[-1])
+        path = rt.search(src, dst, netid[gnd]) if src and dst else None
+        if path is not None:
+            emit(path, gnd)
+    if len(outs) > 1:
+        pcbnew.ZONE_FILLER(b).Fill(b.Zones())
+    # A piece that could not be tied in is fine if its vias reach the front pour; ask KiCad.
+    b.BuildConnectivity()
+    conn = b.GetConnectivity(); conn.RecalculateRatsnest()
+    open_ = conn.GetUnconnectedCount(True) - len(failed)
+    islands = [open_] if open_ > 0 else []
     pcbnew.SaveBoard(f'{d.outdir}/{d.name}.kicad_pcb', b)
-    return failed, gfail + [('back-pour-island', a) for a in islands]
+    return failed, gfail + [('ground-pour-not-joined', a) for a in islands]
