@@ -9,6 +9,7 @@ var modeCharacteristicId = "42de79f1-7248-4c9b-9279-96509b8a9f5e";
 export interface Bluetooth {
   isConnected: boolean;
   subscribe: () => void;
+  disconnect: () => void;
   setDeviceMode: (mode: Mode) => Promise<void>;
 }
 
@@ -17,6 +18,7 @@ export const useBluetooth = (eventHandler: (x: Message) => void): Bluetooth => {
   const [modeCharacteristic, setModeCharacteristic] =
     React.useState<BluetoothRemoteGATTCharacteristic | null>(null);
   const eventHandlerRef = React.useRef<(x: Message) => void>();
+  const deviceRef = React.useRef<BluetoothDevice | null>(null);
 
   React.useEffect(() => {
     eventHandlerRef.current = eventHandler;
@@ -35,6 +37,7 @@ export const useBluetooth = (eventHandler: (x: Message) => void): Bluetooth => {
         throw device;
       }
 
+      deviceRef.current = device;
       device.addEventListener("gattserverdisconnected", () =>
         setIsConnected(false)
       );
@@ -60,8 +63,13 @@ export const useBluetooth = (eventHandler: (x: Message) => void): Bluetooth => {
         "characteristicvaluechanged",
         (event: any) => {
           const newValueReceived = new TextDecoder().decode(event.target.value);
-          const data = messageSchema.parse(JSON.parse(newValueReceived));
-          eventHandlerRef.current && eventHandlerRef.current(data);
+          try {
+            const data = messageSchema.parse(JSON.parse(newValueReceived));
+            eventHandlerRef.current && eventHandlerRef.current(data);
+          } catch (e) {
+            // A truncated or unknown notification is not worth an error screen
+            console.log("Bluetooth (unparsed):", newValueReceived, e);
+          }
         }
       );
 
@@ -76,9 +84,16 @@ export const useBluetooth = (eventHandler: (x: Message) => void): Bluetooth => {
   const setDeviceMode = async (mode: Mode) => {
     const modeValue = [null, Mode.SINGLE_POINT, Mode.THREE_POINT].indexOf(mode);
     if (modeCharacteristic) {
-      await modeCharacteristic.writeValue(Uint8Array.of(modeValue));
+      await modeCharacteristic
+        .writeValue(Uint8Array.of(modeValue))
+        .catch((e: Error) => console.error("Bluetooth mode write failed:", e));
     }
   };
 
-  return { setDeviceMode, subscribe, isConnected };
+  const disconnect = () => {
+    deviceRef.current?.gatt?.disconnect();
+    setIsConnected(false);
+  };
+
+  return { setDeviceMode, subscribe, disconnect, isConnected };
 };

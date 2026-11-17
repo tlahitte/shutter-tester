@@ -2,7 +2,7 @@ import { useContext, useEffect, useState } from "react";
 import "./App.css";
 import AddSpeed from "./components/AddSpeed";
 import Conditional from "./components/Conditional";
-import Connect from "./components/Connect";
+import Connect, { ConnectionType } from "./components/Connect";
 import DirectionControl from "./components/DirectionControl";
 import ModeControl from "./components/ModeControl";
 import { Context } from "./components/SettingsContext";
@@ -10,10 +10,12 @@ import ShotByShotView from "./components/ShotByShotView";
 import ShutterTimingView from "./components/ShutterTimingView";
 import SinglePointMeasurements from "./components/SinglePointMeasurements";
 import TestShot from "./components/TestShot";
+import ThemeControl from "./components/ThemeControl";
 import ThreePointMeasurements from "./components/ThreePointMeasurements";
 import { defaultSpeeds } from "./lib/defaults";
 import messageHandler from "./lib/internalMessageBus";
 import { useBluetooth } from "./lib/useBluetooth";
+import { useSerial } from "./lib/useSerial";
 import { formatSpeed, sortSpeeds } from "./lib/utils";
 import { InternalMessage, InternalMessageType } from "./types/InternalMessage";
 import {
@@ -32,6 +34,28 @@ function App() {
   const [speeds, setSpeeds] = useState(defaultSpeeds);
   const [selectedSpeed, setSelectedSpeed] = useState(speeds[0]);
 
+  // Apply theme
+  useEffect(() => {
+    const root = document.documentElement;
+    const applyTheme = (theme: "light" | "dark") => {
+      root.classList.remove("light", "dark");
+      root.classList.add(theme);
+    };
+
+    if (settings.theme === "system") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+        applyTheme(e.matches ? "dark" : "light");
+      };
+
+      handleChange(mediaQuery); // Apply initial
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    } else {
+      applyTheme(settings.theme);
+    }
+  }, [settings.theme]);
+
   const removeSpeed = (speed: string) => {
     setSpeeds(speeds.filter((existingSpeed) => existingSpeed !== speed));
   };
@@ -44,14 +68,14 @@ function App() {
     messageHandler.emit({ type: InternalMessageType.Reset });
   };
 
-  const handleMetadataMessage = (_: MetadataMessage) => {};
+  const handleMetadataMessage = (_: MetadataMessage) => { };
 
   const updateShutterDirection = (message: ThreePointMeasurement) => {
-    if(settings.shutterDirection === ShutterDirection.Auto){
-      if(message.sensor1.open < message.sensor3.open){
-        setSettings({...settings, shutterDirection: ShutterDirection.Vertical})
-      }else{
-        setSettings({...settings, shutterDirection: ShutterDirection.Horizontal})
+    if (settings.shutterDirection === ShutterDirection.Auto) {
+      if (message.sensor1.open < message.sensor3.open) {
+        setSettings({ ...settings, shutterDirection: ShutterDirection.Vertical })
+      } else {
+        setSettings({ ...settings, shutterDirection: ShutterDirection.Horizontal })
       }
     }
   }
@@ -74,19 +98,48 @@ function App() {
     }
   };
 
-  const { setDeviceMode, subscribe, isConnected } = useBluetooth(handleMessage);
+  const bluetooth = useBluetooth(handleMessage);
+  const serial = useSerial(handleMessage);
+
+  const isConnected = bluetooth.isConnected || serial.isConnected;
+  const connectionType: ConnectionType | null = serial.isConnected
+    ? "usb"
+    : bluetooth.isConnected
+      ? "bluetooth"
+      : null;
 
   const setMode = (mode: ViewMode) => {
-    if ([ViewMode.THREE_POINT, ViewMode.SHUTTER_TIMING].includes(mode)) {
-      setDeviceMode(Mode.THREE_POINT);
-    } else if (mode === ViewMode.SINGLE_POINT) {
-      setDeviceMode(Mode.SINGLE_POINT);
+    const deviceMode = [ViewMode.THREE_POINT, ViewMode.SHUTTER_TIMING].includes(mode)
+      ? Mode.THREE_POINT
+      : Mode.SINGLE_POINT;
+
+    if (bluetooth.isConnected) {
+      bluetooth.setDeviceMode(deviceMode);
+    } else if (serial.isConnected) {
+      serial.setDeviceMode(deviceMode);
     }
   };
 
-  const subscribeBluetooth = () => {
-    subscribe();
+  const connectBluetooth = () => bluetooth.subscribe();
+  const connectUsb = () => serial.connect();
+
+  const disconnect = () => {
+    if (serial.isConnected) {
+      serial.disconnect();
+    }
+    if (bluetooth.isConnected) {
+      bluetooth.disconnect();
+    }
   };
+
+  // The board boots in three point mode whatever the UI shows, so tell it the
+  // UI's mode as soon as a connection comes up.
+  useEffect(() => {
+    if (isConnected) {
+      setMode(settings.mode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bluetooth.isConnected, serial.isConnected]);
 
   useEffect(() => {
     const handleSelectSpeed = (message: InternalMessage) => {
@@ -107,6 +160,7 @@ function App() {
     <>
       <header>
         <div className="connect">
+          <ThemeControl />
           <DirectionControl />
           <ModeControl onChange={setMode} />
           <AddSpeed onAddSpeed={addSpeed} />
@@ -120,7 +174,13 @@ function App() {
               mode={settings.mode}
             />
           ) : (
-            <Connect onClick={subscribeBluetooth} isConnected={isConnected} />
+            <Connect
+              onConnectBluetooth={connectBluetooth}
+              onConnectUsb={connectUsb}
+              onDisconnect={disconnect}
+              isConnected={isConnected}
+              connectionType={connectionType}
+            />
           )}
         </div>
         <h1>
